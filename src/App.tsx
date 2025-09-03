@@ -1,8 +1,15 @@
-import { balance } from "./Store2";
+import {
+  balance,
+  gamePhase,
+  cupsClickable,
+  playResponse,
+  betAmountStore,
+} from "./Store2";
 import React, { useRef, useState, useEffect } from "react";
 import { Application, extend, useApplication, useTick } from "@pixi/react";
 import { Assets, Container, Sprite, Texture } from "pixi.js";
 import BetBar from "./BetBar";
+import { playAPI, PlayResponse } from "./api";
 
 // extend tells @pixi/react what Pixi.js components are available
 extend({
@@ -61,7 +68,6 @@ const NameSprite = () => {
 };
 
 const PrizeSprite = ({ x, y }: { x: number; y: number }) => {
-  const { app } = useApplication();
   const spriteRef = useRef<Sprite>(null);
   const [texture, setTexture] = useState(Texture.EMPTY);
 
@@ -94,7 +100,6 @@ const CupSprite = ({
   y: number;
   onClick?: () => void;
 }) => {
-  const { app } = useApplication();
   const spriteRef = useRef<Sprite>(null);
   const [texture, setTexture] = useState(Texture.EMPTY);
 
@@ -130,7 +135,17 @@ const CupSprite = ({
   );
 };
 
-const CupStage = React.forwardRef((props, ref) => {
+const CupStage = React.forwardRef<
+  {
+    startShuffle: () => void;
+    setAnimationFinished: () => void;
+  },
+  {
+    cupsClickable: boolean;
+    onCupClick: (cupIndex: number) => void;
+    onAnimationFinished: () => void;
+  }
+>(({ cupsClickable, onCupClick, onAnimationFinished }, ref) => {
   const initialCups = [
     { id: "left", x: 300, y: 320 },
     { id: "center", x: 500, y: 320 },
@@ -138,7 +153,6 @@ const CupStage = React.forwardRef((props, ref) => {
   ];
   const prizePosition = { x: 500, y: 400 };
   const [cupPositions, setCupPositions] = useState(initialCups);
-  const [targetPositions, setTargetPositions] = useState(initialCups);
   const [shuffling, setShuffling] = useState(false);
   const [lifting, setLifting] = useState(false);
   const [liftPhase, setLiftPhase] = useState<"up" | "pause" | "down" | null>(
@@ -176,6 +190,10 @@ const CupStage = React.forwardRef((props, ref) => {
       shufflePhase.current = null;
       swapProgress.current = 0;
     },
+    setAnimationFinished: () => {
+      // This method will be called when animation finishes
+      // The actual cup clickable state is managed by the parent
+    },
   }));
 
   // Animate each swap in the sequence
@@ -208,7 +226,7 @@ const CupStage = React.forwardRef((props, ref) => {
           liftFrame.current = 0;
           // Start shuffle after lift
           shuffleSequence.current = generateShuffleSequence(
-            12 + Math.floor(Math.random() * 6),
+            6 + Math.floor(Math.random() * 3),
           );
           currentShuffle.current = 0;
           shufflePhase.current = null;
@@ -273,6 +291,8 @@ const CupStage = React.forwardRef((props, ref) => {
       }
     } else {
       setShuffling(false);
+      // Animation is finished, notify parent
+      onAnimationFinished();
     }
   });
 
@@ -281,14 +301,12 @@ const CupStage = React.forwardRef((props, ref) => {
       <BgSprite />
       <NameSprite />
       <PrizeSprite x={prizePosition.x} y={prizePosition.y} />
-      {cupPositions.map((pos) => (
+      {cupPositions.map((pos, index) => (
         <CupSprite
           key={pos.id}
           x={pos.x}
           y={pos.y}
-          onClick={() => {
-            console.log(`Cup ${pos.id} clicked!`);
-          }}
+          onClick={cupsClickable ? () => onCupClick(index) : undefined}
         />
       ))}
     </>
@@ -296,22 +314,106 @@ const CupStage = React.forwardRef((props, ref) => {
 });
 
 export default function App() {
-  // Subscribe to Svelte balance store
-  const [currentBalance, setCurrentBalance] = useState(0);
+  // Subscribe to Svelte stores
+  const [currentBalance, setCurrentBalance] = useState(100);
+  const [currentGamePhase, setCurrentGamePhase] = useState<
+    "idle" | "playing" | "animating" | "selecting" | "resolving"
+  >("idle");
+  const [areCupsClickable, setAreCupsClickable] = useState(false);
+  const [currentPlayResponse, setCurrentPlayResponse] =
+    useState<PlayResponse | null>(null);
+  const [currentBetAmount, setCurrentBetAmount] = useState(1);
+
   useEffect(() => {
-    const unsubscribe = balance.subscribe(setCurrentBalance);
-    return unsubscribe;
+    const unsubscribeBalance = balance.subscribe(setCurrentBalance);
+    const unsubscribeGamePhase = gamePhase.subscribe(setCurrentGamePhase);
+    const unsubscribeCupsClickable =
+      cupsClickable.subscribe(setAreCupsClickable);
+    const unsubscribePlayResponse = playResponse.subscribe(
+      setCurrentPlayResponse,
+    );
+    const unsubscribeBetAmount = betAmountStore.subscribe(setCurrentBetAmount);
+
+    return () => {
+      unsubscribeBalance();
+      unsubscribeGamePhase();
+      unsubscribeCupsClickable();
+      unsubscribePlayResponse();
+      unsubscribeBetAmount();
+    };
   }, []);
-  const cupStageRef = useRef<any>(null);
-  const handleTest = () => {
-    console.log("Test button pressed");
-    if (cupStageRef.current) {
-      console.log("Calling startShuffle on CupStage ref");
-      cupStageRef.current.startShuffle();
-    } else {
-      console.warn("CupStage ref is null");
+
+  const cupStageRef = useRef<{
+    startShuffle: () => void;
+    setAnimationFinished: () => void;
+  }>(null);
+
+  const handlePlay = async () => {
+    if (currentGamePhase !== "idle") return; // Prevent duplicate requests
+
+    try {
+      gamePhase.set("playing");
+      cupsClickable.set(false);
+
+      // Start the API call
+      const response = await playAPI(currentBetAmount);
+      playResponse.set(response);
+
+      // Start the animation
+      gamePhase.set("animating");
+      if (cupStageRef.current) {
+        cupStageRef.current.startShuffle();
+      }
+
+      // Deduct bet amount from balance
+      balance.set(currentBalance - currentBetAmount);
+    } catch (error) {
+      console.error("Play API failed:", error);
+      gamePhase.set("idle");
     }
   };
+
+  const handleCupClick = (cupIndex: number) => {
+    if (!currentPlayResponse || currentGamePhase !== "selecting") return;
+
+    gamePhase.set("resolving");
+
+    // Check if the selected cup is the winning cup
+    const isWin = cupIndex === currentPlayResponse.winningCup;
+
+    if (isWin) {
+      // Player wins - add winnings to balance
+      balance.set(currentBalance + currentPlayResponse.winAmount);
+      alert(`You won $${currentPlayResponse.winAmount}!`);
+    } else {
+      alert("You lost! Try again.");
+    }
+
+    // Reset for next round
+    setTimeout(() => {
+      gamePhase.set("idle");
+      playResponse.set(null);
+      cupsClickable.set(false);
+    }, 2000);
+  };
+
+  const handleAnimationFinished = () => {
+    if (currentGamePhase === "animating") {
+      gamePhase.set("selecting");
+      cupsClickable.set(true);
+    }
+  };
+
+  // When animation finishes, allow cup selection
+  useEffect(() => {
+    if (currentGamePhase === "animating" && areCupsClickable) {
+      gamePhase.set("selecting");
+    }
+  }, [currentGamePhase, areCupsClickable]);
+
+  const isPlayDisabled =
+    currentGamePhase !== "idle" || currentBalance < currentBetAmount;
+
   return (
     <>
       <div
@@ -334,12 +436,17 @@ export default function App() {
           userSelect: "none",
         }}
       >
-        Balance: {currentBalance}
+        Balance: ${currentBalance.toFixed(2)} | Phase: {currentGamePhase}
       </div>
       <Application background={"#1099bb"} resizeTo={window}>
-        <CupStage ref={cupStageRef} />
+        <CupStage
+          ref={cupStageRef}
+          cupsClickable={areCupsClickable}
+          onCupClick={handleCupClick}
+          onAnimationFinished={handleAnimationFinished}
+        />
       </Application>
-      <BetBar onTest={handleTest} />
+      <BetBar onPlay={handlePlay} disabled={isPlayDisabled} />
     </>
   );
 }

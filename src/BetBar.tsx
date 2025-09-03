@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { betAmountStore } from "./Store2";
 
 const step = (val: number) => {
@@ -24,15 +24,19 @@ const betOptions = [
   1000,
 ];
 
-export default function BetBar({ onTest }: { onTest?: () => void }) {
+export default function BetBar({
+  onPlay,
+  disabled = false,
+}: {
+  onPlay?: () => void;
+  disabled?: boolean;
+}) {
   const [bet, setBet] = useState(1);
   const [showModal, setShowModal] = useState(false);
-  const [loading, setLoading] = useState(false);
 
   const handlePlay = () => {
-    setLoading(true);
     betAmountStore.set(bet);
-    setTimeout(() => setLoading(false), 500);
+    onPlay?.();
   };
 
   return (
@@ -53,7 +57,6 @@ export default function BetBar({ onTest }: { onTest?: () => void }) {
         zIndex: 20,
       }}
     >
-      <button onClick={onTest}>Test</button>
       <button
         onClick={() => setBet(Math.max(0.1, +(bet - step(bet)).toFixed(2)))}
       >
@@ -65,7 +68,7 @@ export default function BetBar({ onTest }: { onTest?: () => void }) {
       >
         +
       </button>
-      <button onClick={handlePlay} disabled={loading}>
+      <button onClick={handlePlay} disabled={disabled}>
         Play
       </button>
       {showModal && (
