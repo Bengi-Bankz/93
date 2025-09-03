@@ -16,7 +16,7 @@ const betOptions = [
   12, 15, 20, 25, 50, 100, 200, 500, 1000,
 ];
 
-export default function BetBar() {
+export default function BetBar({ onTest }: { onTest?: () => void }) {
   const [bet, setBet] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -43,6 +43,7 @@ export default function BetBar() {
       boxShadow: "0 2px 16px rgba(0,0,0,0.12)",
       zIndex: 20,
     }}>
+      <button onClick={onTest}>Test</button>
       <button onClick={() => setBet(Math.max(0.1, +(bet - step(bet)).toFixed(2)))}>-</button>
       <button onClick={() => setShowModal(true)}>{bet.toFixed(2)}</button>
       <button onClick={() => setBet(Math.min(1000, +(bet + step(bet)).toFixed(2)))}>+</button>
@@ -51,8 +52,8 @@ export default function BetBar() {
         <div style={{ position: "fixed", top: 120, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, padding: "24px 32px", zIndex: 22, boxShadow: "0 2px 16px rgba(0,0,0,0.18)" }}>
           <h3>Select Bet Amount</h3>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
-            {betOptions.map(option => (
-              <button key={option} onClick={() => { setBet(+option); setShowModal(false); }}>{(+option).toFixed(2)}</button>
+            {betOptions.map((option, idx) => (
+              <button key={idx} onClick={() => { setBet(+option); setShowModal(false); }}>{(+option).toFixed(2)}</button>
             ))}
           </div>
         </div>
