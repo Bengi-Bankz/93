@@ -306,7 +306,11 @@ const CupStage = React.forwardRef<
           key={pos.id}
           x={pos.x}
           y={pos.y}
-          onClick={cupsClickable ? () => onCupClick(index) : undefined}
+          onClick={() => {
+            if (cupsClickable) {
+              onCupClick(index);
+            }
+          }}
         />
       ))}
     </>
