@@ -1,3 +1,4 @@
+import { balance } from "./Store2";
 import React, { useRef, useState, useEffect } from "react";
 import { Application, extend, useApplication, useTick } from "@pixi/react";
 import { Assets, Container, Sprite, Texture } from "pixi.js";
@@ -131,45 +132,134 @@ const CupStage = React.forwardRef((props, ref) => {
   const [cupPositions, setCupPositions] = useState(initialCups);
   const [targetPositions, setTargetPositions] = useState(initialCups);
   const [shuffling, setShuffling] = useState(false);
-  const shuffleStep = useRef(0);
+  const [lifting, setLifting] = useState(false);
+  const [liftPhase, setLiftPhase] = useState<'up' | 'pause' | 'down' | null>(null);
+  const liftFrame = useRef(0);
+  const shuffleSequence = useRef<number[][]>([]);
+  const currentShuffle = useRef(0);
+  const shufflePhase = useRef<'first' | 'second' | null>(null);
+  const swapProgress = useRef(0);
+
+  // Helper to generate a random shuffle sequence
+  function generateShuffleSequence(steps = 8) {
+    const swaps = [
+      [0, 1], // left-center
+      [1, 2], // center-right
+      [0, 2], // left-right
+    ];
+    let seq = [];
+    for (let i = 0; i < steps; i++) {
+      seq.push(swaps[Math.floor(Math.random() * swaps.length)]);
+    }
+    return seq;
+  }
 
   // Expose startShuffle to parent via ref
   React.useImperativeHandle(ref, () => ({
     startShuffle: () => {
       console.log('CupStage.startShuffle called');
-      setShuffling(true);
-      shuffleStep.current = 0;
-      // Set target positions to swapped
-      setTargetPositions((prev) => {
-        const newPos = [...prev];
-        [newPos[0], newPos[2]] = [newPos[2], newPos[0]];
-        return newPos;
-      });
+      // Start lift animation first
+      setLifting(true);
+      setLiftPhase('up');
+      liftFrame.current = 0;
+      setShuffling(false);
+      shufflePhase.current = null;
+      swapProgress.current = 0;
     }
   }));
 
-  // Smoothly animate cup positions towards targetPositions
+  // Animate each swap in the sequence
   useTick(() => {
-    if (!shuffling) return;
-    let done = true;
-    setCupPositions((prev) => {
-      return prev.map((cup, i) => {
-        const target = targetPositions[i];
-        let dx = target.x - cup.x;
-        let dy = target.y - cup.y;
-        // If not at target, move a fraction towards it
-        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-          done = false;
-          return {
-            ...cup,
-            x: cup.x + dx * 0.2,
-            y: cup.y + dy * 0.2,
-          };
+    // Lifting animation for center cup
+    if (lifting) {
+      if (liftPhase === 'up') {
+        liftFrame.current++;
+        setCupPositions((prev) => prev.map((cup, i) =>
+          i === 1 ? { ...cup, y: cup.y - 3 } : cup
+        ));
+        if (liftFrame.current >= 20) {
+          setLiftPhase('pause');
+          liftFrame.current = 0;
         }
-        return { ...cup, x: target.x, y: target.y };
-      });
-    });
-    if (done) {
+      } else if (liftPhase === 'pause') {
+        liftFrame.current++;
+        if (liftFrame.current >= 15) {
+          setLiftPhase('down');
+          liftFrame.current = 0;
+        }
+      } else if (liftPhase === 'down') {
+        liftFrame.current++;
+        setCupPositions((prev) => prev.map((cup, i) =>
+          i === 1 ? { ...cup, y: cup.y + 3 } : cup
+        ));
+        if (liftFrame.current >= 20) {
+          setLifting(false);
+          setLiftPhase(null);
+          liftFrame.current = 0;
+          // Start shuffle after lift
+          shuffleSequence.current = generateShuffleSequence(12 + Math.floor(Math.random() * 6));
+          currentShuffle.current = 0;
+          shufflePhase.current = null;
+          swapProgress.current = 0;
+          setShuffling(true);
+        }
+      }
+      return;
+    }
+    // Shuffle animation
+    if (!shuffling) return;
+    if (currentShuffle.current < shuffleSequence.current.length) {
+      const [a, b] = shuffleSequence.current[currentShuffle.current];
+      // Staggered swap: first move cup a, then cup b
+      if (!shufflePhase.current) {
+        shufflePhase.current = 'first';
+        swapProgress.current = 0;
+      }
+      if (shufflePhase.current === 'first') {
+        swapProgress.current++;
+        setCupPositions((prev) => {
+          const newPos = [...prev];
+          // Move cup a towards cup b's x
+          const targetX = initialCups[b].x;
+          const dx = targetX - newPos[a].x;
+          newPos[a] = {
+            ...newPos[a],
+            x: Math.abs(dx) > 1 ? newPos[a].x + dx * 0.09 : targetX,
+          };
+          return newPos;
+        });
+        // Check if cup a reached target
+        if (swapProgress.current > 32) {
+          shufflePhase.current = 'second';
+          swapProgress.current = 0;
+        }
+      } else if (shufflePhase.current === 'second') {
+        swapProgress.current++;
+        setCupPositions((prev) => {
+          const newPos = [...prev];
+          // Move cup b towards cup a's original x
+          const targetX = initialCups[a].x;
+          const dx = targetX - newPos[b].x;
+          newPos[b] = {
+            ...newPos[b],
+            x: Math.abs(dx) > 1 ? newPos[b].x + dx * 0.09 : targetX,
+          };
+          return newPos;
+        });
+        // Check if cup b reached target
+        if (swapProgress.current > 32) {
+          // Swap cup data for next shuffle
+          setCupPositions((prev) => {
+            const newPos = [...prev];
+            [newPos[a], newPos[b]] = [newPos[b], newPos[a]];
+            return newPos;
+          });
+          shufflePhase.current = null;
+          swapProgress.current = 0;
+          currentShuffle.current++;
+        }
+      }
+    } else {
       setShuffling(false);
     }
   });
@@ -189,6 +279,12 @@ const CupStage = React.forwardRef((props, ref) => {
 });
 
 export default function App() {
+  // Subscribe to Svelte balance store
+  const [currentBalance, setCurrentBalance] = useState(0);
+  useEffect(() => {
+    const unsubscribe = balance.subscribe(setCurrentBalance);
+    return unsubscribe;
+  }, []);
   const cupStageRef = useRef<any>(null);
   const handleTest = () => {
     console.log('Test button pressed');
@@ -201,6 +297,26 @@ export default function App() {
   };
   return (
     <>
+      <div style={{
+        position: "fixed",
+        top: 16,
+        left: 16,
+        zIndex: 100,
+        fontSize: "1.2em",
+        fontWeight: "bold",
+        background: "rgba(255,255,255,0.95)",
+        padding: "10px 22px",
+        borderRadius: 10,
+        boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
+        color: "#222",
+        maxWidth: "90vw",
+        maxHeight: "8vh",
+        overflow: "hidden",
+        pointerEvents: "none",
+        userSelect: "none"
+      }}>
+        Balance: {currentBalance}
+      </div>
       <Application background={"#1099bb"} resizeTo={window}>
         <CupStage ref={cupStageRef} />
       </Application>
